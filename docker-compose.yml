@@ -2,7 +2,7 @@ version: '3.8'
 
 networks:
   traefik-net:
-    external: true
+    driver: bridge
   internal-net:
     driver: bridge
 
@@ -32,14 +32,26 @@ services:
       - "--providers.docker=true"
       - "--providers.docker.exposedbydefault=false"
       - "--entrypoints.web.address=:80"
+      - "--entrypoints.web.http.redirections.entryPoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entryPoint.scheme=https"
       - "--entrypoints.websecure.address=:443"
+      - "--certificatesresolvers.myresolver.acme.tlschallenge=true"
+      - "--certificatesresolvers.myresolver.acme.email=${ACME_EMAIL:-dev@innexar.app}"
+      - "--certificatesresolvers.myresolver.acme.storage=/etc/traefik/acme.json"
     ports:
       - "80:80"
       - "443:443"
-      - "8080:8080" # Dashboard
+      # - "8080:8080" # Dashboard exposed via traefik router below
     volumes:
       - "/var/run/docker.sock:/var/run/docker.sock:ro"
       - "traefik-data:/etc/traefik"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.api.rule=Host(`traefik.innexar.app`)"
+      - "traefik.http.routers.api.service=api@internal"
+      - "traefik.http.routers.api.middlewares=auth"
+      - "traefik.http.middlewares.auth.basicauth.users=${TRAEFIK_BASIC_AUTH}"
+      - "traefik.http.routers.api.tls.certresolver=myresolver"
     networks:
       - traefik-net
       - internal-net
@@ -80,6 +92,8 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.keycloak.rule=Host(`auth.innexar.app`)"
+      - "traefik.http.routers.keycloak.entrypoints=websecure"
+      - "traefik.http.routers.keycloak.tls.certresolver=myresolver"
       - "traefik.http.services.keycloak.loadbalancer.server.port=8080"
     networks:
       - traefik-net
@@ -109,9 +123,13 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.gitlab.rule=Host(`git.innexar.app`)"
+      - "traefik.http.routers.gitlab.entrypoints=websecure"
+      - "traefik.http.routers.gitlab.tls.certresolver=myresolver"
       - "traefik.http.services.gitlab.loadbalancer.server.port=80"
       - "traefik.http.routers.registry.rule=Host(`registry.innexar.app`)"
-      - "traefik.http.services.registry.loadbalancer.server.port=5005" # Default registry port
+      - "traefik.http.routers.registry.entrypoints=websecure"
+      - "traefik.http.routers.registry.tls.certresolver=myresolver"
+      - "traefik.http.services.registry.loadbalancer.server.port=5005"
     networks:
       - traefik-net
       - internal-net
@@ -135,6 +153,8 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.sonarqube.rule=Host(`sonar.innexar.app`)"
+      - "traefik.http.routers.sonarqube.entrypoints=websecure"
+      - "traefik.http.routers.sonarqube.tls.certresolver=myresolver"
       - "traefik.http.services.sonarqube.loadbalancer.server.port=9000"
     networks:
       - traefik-net
@@ -170,6 +190,8 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.grafana.rule=Host(`grafana.innexar.app`)"
+      - "traefik.http.routers.grafana.entrypoints=websecure"
+      - "traefik.http.routers.grafana.tls.certresolver=myresolver"
       - "traefik.http.services.grafana.loadbalancer.server.port=3000"
     networks:
       - traefik-net
@@ -185,6 +207,8 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.uptime-kuma.rule=Host(`status.innexar.app`)"
+      - "traefik.http.routers.uptime-kuma.entrypoints=websecure"
+      - "traefik.http.routers.uptime-kuma.tls.certresolver=myresolver"
       - "traefik.http.services.uptime-kuma.loadbalancer.server.port=3001"
     networks:
       - traefik-net
@@ -201,6 +225,8 @@ services:
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.portainer.rule=Host(`portainer.innexar.app`)"
+      - "traefik.http.routers.portainer.entrypoints=websecure"
+      - "traefik.http.routers.portainer.tls.certresolver=myresolver"
       - "traefik.http.services.portainer.loadbalancer.server.port=9000"
     networks:
       - traefik-net
