@@ -1,0 +1,207 @@
+version: '3.8'
+
+networks:
+  traefik-net:
+    external: true
+  internal-net:
+    driver: bridge
+
+volumes:
+  traefik-data:
+  postgres-data:
+  gitlab-config:
+  gitlab-logs:
+  gitlab-data:
+  sonarqube-data:
+  sonarqube-extensions:
+  sonarqube-logs:
+  prometheus-data:
+  grafana-data:
+  uptime-kuma-data:
+  portainer-data:
+
+
+services:
+  # Reverse Proxy
+  traefik:
+    image: traefik:v2.10
+    container_name: traefik
+    restart: unless-stopped
+    command:
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8080:8080" # Dashboard
+    volumes:
+      - "/var/run/docker.sock:/var/run/docker.sock:ro"
+      - "traefik-data:/etc/traefik"
+    networks:
+      - traefik-net
+      - internal-net
+
+  # Database (Shared)
+  postgres:
+    image: postgres:15-alpine
+    container_name: postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./scripts/init-db:/docker-entrypoint-initdb.d
+    networks:
+      - internal-net
+
+  # Identity Provider
+  keycloak:
+    image: quay.io/keycloak/keycloak:23.0
+    container_name: keycloak
+    restart: unless-stopped
+    command: start-dev --import-realm
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: postgres
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD}
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN_USER:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+      KC_PROXY: edge
+      KC_HOSTNAME_STRICT: "false"
+    depends_on:
+      - postgres
+    volumes:
+      - ./config/keycloak/realm-export.json:/opt/keycloak/data/import/realm-export.json
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.keycloak.rule=Host(`auth.innexar.app`)"
+      - "traefik.http.services.keycloak.loadbalancer.server.port=8080"
+    networks:
+      - traefik-net
+      - internal-net
+
+  # Version Control & Registry
+  gitlab:
+    image: gitlab/gitlab-ce:latest
+    container_name: gitlab
+    restart: unless-stopped
+    hostname: 'git.innexar.app'
+    environment:
+      GITLAB_OMNIBUS_CONFIG: |
+        external_url 'https://git.innexar.app'
+        registry_external_url 'https://registry.innexar.app'
+        gitlab_rails['initial_root_password'] = '${GITLAB_ROOT_PASSWORD}'
+        nginx['listen_port'] = 80
+        nginx['listen_https'] = false
+        registry_nginx['listen_port'] = 80
+        registry_nginx['listen_https'] = false
+    ports:
+      - "22:22"
+    volumes:
+      - gitlab-config:/etc/gitlab
+      - gitlab-logs:/var/log/gitlab
+      - gitlab-data:/var/opt/gitlab
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.gitlab.rule=Host(`git.innexar.app`)"
+      - "traefik.http.services.gitlab.loadbalancer.server.port=80"
+      - "traefik.http.routers.registry.rule=Host(`registry.innexar.app`)"
+      - "traefik.http.services.registry.loadbalancer.server.port=5005" # Default registry port
+    networks:
+      - traefik-net
+      - internal-net
+
+  # Code Quality
+  sonarqube:
+    image: sonarqube:community
+    container_name: sonarqube
+    restart: unless-stopped
+    environment:
+      SONAR_JDBC_URL: jdbc:postgresql://postgres:5432/sonarqube
+      SONAR_JDBC_USERNAME: postgres
+      SONAR_JDBC_PASSWORD: ${POSTGRES_PASSWORD}
+      SONAR_ES_BOOTSTRAP_CHECKS_DISABLE: "true"
+    volumes:
+      - sonarqube-data:/opt/sonarqube/data
+      - sonarqube-extensions:/opt/sonarqube/extensions
+      - sonarqube-logs:/opt/sonarqube/logs
+    depends_on:
+      - postgres
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.sonarqube.rule=Host(`sonar.innexar.app`)"
+      - "traefik.http.services.sonarqube.loadbalancer.server.port=9000"
+    networks:
+      - traefik-net
+      - internal-net
+
+  # Monitoring - Prometheus
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    restart: unless-stopped
+    volumes:
+      - ./config/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+    networks:
+      - internal-net
+
+  # Monitoring - Grafana
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD}
+      - GF_SERVER_ROOT_URL=https://grafana.innexar.app
+      - GRAFANA_CLIENT_SECRET=${GRAFANA_CLIENT_SECRET}
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./config/grafana/grafana.ini:/etc/grafana/grafana.ini
+      - ./config/grafana/provisioning:/etc/grafana/provisioning
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.grafana.rule=Host(`grafana.innexar.app`)"
+      - "traefik.http.services.grafana.loadbalancer.server.port=3000"
+    networks:
+      - traefik-net
+      - internal-net
+
+  # Status Page
+  uptime-kuma:
+    image: louislam/uptime-kuma:1
+    container_name: uptime-kuma
+    restart: unless-stopped
+    volumes:
+      - uptime-kuma-data:/app/data
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.uptime-kuma.rule=Host(`status.innexar.app`)"
+      - "traefik.http.services.uptime-kuma.loadbalancer.server.port=3001"
+    networks:
+      - traefik-net
+      - internal-net
+
+  # Docker Management
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: portainer
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portainer-data:/data
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.portainer.rule=Host(`portainer.innexar.app`)"
+      - "traefik.http.services.portainer.loadbalancer.server.port=9000"
+    networks:
+      - traefik-net
+      - internal-net

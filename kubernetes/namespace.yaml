@@ -1,7 +1,0 @@
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: innexar-platform
-  labels:
-    name: innexar-platform
-

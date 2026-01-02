@@ -1,0 +1,78 @@
+{
+  "realm": "innexar",
+  "enabled": true,
+  "users": [
+    {
+      "username": "admin",
+      "enabled": true,
+      "email": "admin@innexar.app",
+      "firstName": "Admin",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "admin",
+          "temporary": true
+        }
+      ],
+      "realmRoles": [ "admin" ]
+    }
+  ],
+  "roles": {
+    "realm": [
+      {
+        "name": "admin",
+        "description": "Administrator role"
+      },
+      {
+        "name": "developer",
+        "description": "Developer role"
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "gitlab",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "redirectUris": [
+        "https://git.innexar.app/users/auth/openid_connect/callback"
+      ],
+      "webOrigins": [ "+" ],
+      "publicClient": false,
+      "secret": "gitlab-secret-key"
+    },
+    {
+      "clientId": "sonarqube",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "redirectUris": [
+        "https://sonar.innexar.app/oauth2/callback/oidc"
+      ],
+      "webOrigins": [ "+" ],
+      "publicClient": false,
+      "secret": "sonarqube-secret-key"
+    },
+    {
+      "clientId": "grafana",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "redirectUris": [
+        "https://grafana.innexar.app/login/generic_oauth"
+      ],
+      "webOrigins": [ "+" ],
+      "publicClient": false,
+      "secret": "grafana-secret-key"
+    },
+    {
+      "clientId": "portainer",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "redirectUris": [
+        "https://portainer.innexar.app/login/oauth/callback"
+      ],
+      "webOrigins": [ "+" ],
+      "publicClient": false,
+      "secret": "portainer-secret-key"
+    }
+  ]
+}
