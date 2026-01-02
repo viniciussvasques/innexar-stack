@@ -1,0 +1,28 @@
+# Environment files
+.env
+*.env
+!.env.example
+
+# Kubernetes secrets
+kubernetes/secrets.yaml
+**/secrets.yaml
+
+# Logs
+*.log
+logs/
+
+# Temporary files
+*.tmp
+*.temp
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Kubernetes
+*.kubeconfig

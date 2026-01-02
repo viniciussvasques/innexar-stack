@@ -1,0 +1,33 @@
+http:
+  middlewares:
+    # Security headers
+    secureHeaders:
+      headers:
+        customResponseHeaders:
+          X-Frame-Options: "DENY"
+          X-Content-Type-Options: "nosniff"
+          X-XSS-Protection: "1; mode=block"
+          Referrer-Policy: "strict-origin-when-cross-origin"
+          Permissions-Policy: "geolocation=(), microphone=(), camera=()"
+        customRequestHeaders:
+          X-Forwarded-Proto: "https"
+        sslRedirect: true
+        stsSeconds: 31536000
+        stsIncludeSubdomains: true
+        stsPreload: true
+
+    # Rate limiting
+    rateLimit:
+      rateLimit:
+        burst: 100
+        average: 50
+
+    # Compression
+    compress:
+      compress: {}
+
+    # HTTPS redirect
+    httpsRedirect:
+      redirectScheme:
+        scheme: https
+        permanent: true

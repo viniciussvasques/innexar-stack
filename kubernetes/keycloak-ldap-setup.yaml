@@ -1,0 +1,156 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: keycloak-ldap-setup
+  namespace: innexar-platform
+spec:
+  template:
+    spec:
+      containers:
+      - name: ldap-setup
+        image: alpine:latest
+        command: ["/bin/sh", "-c"]
+        args:
+        - |
+          apk add --no-cache curl jq
+
+          echo "Configurando LDAP no Keycloak..."
+
+          # Aguardar Keycloak ficar pronto
+          while ! curl -f http://keycloak.innexar-platform.svc.cluster.local:8080/realms/master/.well-known/openid-configuration > /dev/null 2>&1; do
+            echo "Aguardando Keycloak..."
+            sleep 5
+          done
+
+          echo "Keycloak está pronto. Testando conexão..."
+
+          # Primeiro, testar se conseguimos acessar o realm innexar
+          REALM_TEST=$(curl -s http://keycloak.innexar-platform.svc.cluster.local:8080/realms/innexar)
+          if echo "$REALM_TEST" | grep -q "realm not found"; then
+            echo "❌ Realm 'innexar' não encontrado!"
+            exit 1
+          fi
+          echo "✅ Realm 'innexar' encontrado"
+
+          # Obter token de admin
+          TOKEN_RESPONSE=$(curl -s -X POST http://keycloak.innexar-platform.svc.cluster.local:8080/realms/master/protocol/openid-connect/token \
+            -H "Content-Type: application/x-www-form-urlencoded" \
+            -d "username=admin" \
+            -d "password=K3ycl0@k_Adm1n_P@ss_2025!" \
+            -d "grant_type=password" \
+            -d "client_id=admin-cli")
+
+          TOKEN=$(echo $TOKEN_RESPONSE | jq -r '.access_token')
+
+          if [ "$TOKEN" = "null" ] || [ -z "$TOKEN" ]; then
+            echo "❌ Erro ao obter token: $TOKEN_RESPONSE"
+            exit 1
+          fi
+
+          echo "✅ Token obtido"
+
+          # Verificar se já existe LDAP configurado
+          EXISTING_LDAP=$(curl -s http://keycloak.innexar-platform.svc.cluster.local:8080/admin/realms/innexar/user-federation/ldap \
+            -H "Authorization: Bearer $TOKEN")
+
+          if echo "$EXISTING_LDAP" | jq -e 'length > 0' > /dev/null 2>&1; then
+            echo "⚠️ LDAP já está configurado. Removendo configuração antiga..."
+            LDAP_ID=$(echo $EXISTING_LDAP | jq -r '.[0].id')
+            curl -s -X DELETE http://keycloak.innexar-platform.svc.cluster.local:8080/admin/realms/innexar/user-federation/ldap/$LDAP_ID \
+              -H "Authorization: Bearer $TOKEN"
+            echo "✅ Configuração antiga removida"
+          fi
+
+          # Criar User Federation LDAP
+          echo "Criando novo provider LDAP..."
+          LDAP_RESPONSE=$(curl -s -X POST http://keycloak.innexar-platform.svc.cluster.local:8080/admin/realms/innexar/user-federation/ldap \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "name": "LDAP Nexus",
+              "priority": 0,
+              "importEnabled": true,
+              "enabled": true,
+              "vendor": "ad",
+              "connectionUrl": "ldap://keycloak.innexar-platform.svc.cluster.local:389",
+              "usersDn": "ou=users,dc=innexar,dc=app",
+              "bindDn": "cn=admin,ou=users,dc=innexar,dc=app",
+              "bindCredential": "K3ycl0@k_Adm1n_P@ss_2025!",
+              "userObjectClasses": "person, organizationalPerson, user",
+              "usernameLdapAttribute": "uid",
+              "rdnLdapAttribute": "uid",
+              "uuidLdapAttribute": "objectGUID",
+              "userLdapFilter": "(objectClass=person)",
+              "searchScope": "1",
+              "validatePasswordPolicy": false,
+              "trustEmail": false,
+              "useTruststoreSpi": "ldapsOnly",
+              "connectionPooling": true,
+              "pagination": true,
+              "allowKerberosAuthentication": false,
+              "debug": false,
+              "syncRegistrations": false,
+              "batchSizeForSync": 1000,
+              "fullSyncPeriod": -1,
+              "changedSyncPeriod": -1
+            }')
+
+          echo "Resposta LDAP: $LDAP_RESPONSE"
+
+          if echo "$LDAP_RESPONSE" | grep -q "error"; then
+            echo "❌ Erro ao criar LDAP: $LDAP_RESPONSE"
+            exit 1
+          fi
+
+          # Obter ID do provider LDAP
+          LDAP_ID=$(curl -s http://keycloak.innexar-platform.svc.cluster.local:8080/admin/realms/innexar/user-federation/ldap \
+            -H "Authorization: Bearer $TOKEN" | jq -r '.[0].id')
+
+          echo "✅ LDAP ID: $LDAP_ID"
+
+          # Criar mapper para username
+          curl -s -X POST http://keycloak.innexar-platform.svc.cluster.local:8080/admin/realms/innexar/user-federation/ldap/$LDAP_ID/mappers \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "name": "username",
+              "federationMapperType": "user-attribute-ldap-mapper",
+              "config": {
+                "user.model.attribute": "username",
+                "ldap.attribute": "uid",
+                "is.mandatory.in.ldap": "true",
+                "read.only": "true",
+                "always.read.value.from.ldap": "false"
+              }
+            }'
+
+          # Criar mapper para email
+          curl -s -X POST http://keycloak.innexar-platform.svc.cluster.local:8080/admin/realms/innexar/user-federation/ldap/$LDAP_ID/mappers \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "name": "email",
+              "federationMapperType": "user-attribute-ldap-mapper",
+              "config": {
+                "user.model.attribute": "email",
+                "ldap.attribute": "mail",
+                "is.mandatory.in.ldap": "false",
+                "read.only": "true",
+                "always.read.value.from.ldap": "false"
+              }
+            }'
+
+          echo "✅ Mappers criados!"
+
+          # Testar conexão LDAP
+          TEST_RESULT=$(curl -s -X GET http://keycloak.innexar-platform.svc.cluster.local:8080/admin/realms/innexar/user-federation/ldap/$LDAP_ID/testConnection \
+            -H "Authorization: Bearer $TOKEN")
+
+          echo "Teste de conexão LDAP: $TEST_RESULT"
+
+          if echo "$TEST_RESULT" | grep -q "success"; then
+            echo "🎉 LDAP configurado e testado com sucesso!"
+          else
+            echo "⚠️ LDAP configurado, mas teste de conexão falhou: $TEST_RESULT"
+          fi
+      restartPolicy: Never

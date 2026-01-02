@@ -1,0 +1,61 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-backup
+  namespace: innexar-platform
+spec:
+  schedule: "0 2 * * *"  # Diário às 2h
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: postgres-backup
+            image: postgres:15-alpine
+            command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Backing up PostgreSQL databases..."
+              
+              # Backup SonarQube
+              PGPASSWORD=$SONAR_PASS pg_dump -h postgres-sonarqube -U sonarqube sonarqube > /backup/sonarqube-$(date +%Y%m%d-%H%M%S).sql
+              
+              # Backup Keycloak
+              PGPASSWORD=$KEYCLOAK_PASS pg_dump -h postgres-keycloak -U keycloak keycloak > /backup/keycloak-$(date +%Y%m%d-%H%M%S).sql
+              
+              echo "Backups completed"
+            env:
+            - name: SONAR_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-sonarqube-secret
+                  key: POSTGRES_PASSWORD
+            - name: KEYCLOAK_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-keycloak-secret
+                  key: POSTGRES_PASSWORD
+            volumeMounts:
+            - name: backup-storage
+              mountPath: /backup
+          volumes:
+          - name: backup-storage
+            persistentVolumeClaim:
+              claimName: backup-storage
+          restartPolicy: OnFailure
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: backup-storage
+  namespace: innexar-platform
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+
